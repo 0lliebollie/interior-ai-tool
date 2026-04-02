@@ -9,63 +9,46 @@ export default async function handler(req, res) {
   }
 
   try {
-    // Stap 1: Start de prediction
-    const createRes = await fetch('https://api.replicate.com/v1/predictions', {
+    // Stap 1: Roep de Gradio Space aan
+    const predictRes = await fetch('https://broyang-interior-ai-designer.hf.space/run/predict', {
       method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${process.env.REPLICATE_API_TOKEN}`,
-        'Content-Type': 'application/json',
-      },
+      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        version: "76604baddc85b1b4616e1c6475eca080da339c8875bd4996705440484a6eac38",
-        input: {
-          image: `data:image/jpeg;base64,${image}`,
-          prompt: prompt,
-          negative_prompt: 'ugly, bad quality, blurry, distorted',
-          guidance_scale: 15,
-          prompt_strength: 0.8,
-          num_inference_steps: 30
-        }
+        data: [
+          { data: `data:image/jpeg;base64,${image}`, type: 'image' },
+          prompt
+        ]
       })
     });
 
-    const prediction = await createRes.json();
-
-    // Stuur volledige response terug als er geen ID is — helpt debuggen
-    if (!prediction.id) {
-      return res.status(500).json({ 
-        error: 'No prediction ID', 
-        detail: JSON.stringify(prediction) 
-      });
+    if (!predictRes.ok) {
+      const errText = await predictRes.text();
+      throw new Error('Space fout: ' + errText);
     }
 
-    // Stap 2: Poll totdat het klaar is (max 60 seconden)
-    let result = null;
-    for (let i = 0; i < 30; i++) {
-      await new Promise(r => setTimeout(r, 2000));
+    const predictData = await predictRes.json();
 
-      const pollRes = await fetch(`https://api.replicate.com/v1/predictions/${prediction.id}`, {
-        headers: {
-          'Authorization': `Bearer ${process.env.REPLICATE_API_TOKEN}`,
-        }
-      });
-
-      const pollData = await pollRes.json();
-
-      if (pollData.status === 'succeeded') {
-        result = Array.isArray(pollData.output) ? pollData.output[0] : pollData.output;
-        break;
-      } else if (pollData.status === 'failed') {
-        throw new Error('Model failed: ' + pollData.error);
-      }
+    // Debug: stuur volledige response terug als er geen output is
+    const output = predictData?.data?.[0];
+    if (!output) {
+      throw new Error('Geen output. Response was: ' + JSON.stringify(predictData).substring(0, 300));
     }
 
-    if (!result) throw new Error('Timeout — model duurde te lang');
-
-    // Stap 3: Haal afbeelding op en stuur als base64
-    const imgRes = await fetch(result);
-    const buffer = await imgRes.arrayBuffer();
-    const base64 = Buffer.from(buffer).toString('base64');
+    // Output kan een URL of base64 zijn
+    let base64;
+    if (typeof output === 'string' && output.startsWith('data:')) {
+      base64 = output.split(',')[1];
+    } else if (typeof output === 'string' && output.startsWith('http')) {
+      const imgRes = await fetch(output);
+      const buffer = await imgRes.arrayBuffer();
+      base64 = Buffer.from(buffer).toString('base64');
+    } else if (output?.url) {
+      const imgRes = await fetch(output.url);
+      const buffer = await imgRes.arrayBuffer();
+      base64 = Buffer.from(buffer).toString('base64');
+    } else {
+      throw new Error('Onbekend output formaat: ' + JSON.stringify(output).substring(0, 200));
+    }
 
     return res.status(200).json({ result: base64 });
 
