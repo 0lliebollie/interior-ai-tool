@@ -9,43 +9,37 @@ export default async function handler(req, res) {
   }
 
   try {
-    const response = await fetch('https://adin019-interior-ai-backend.hf.space/run/predict', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        data: [
-          { path: `data:image/jpeg;base64,${image}`, type: 'image' },
-          prompt
-        ]
-      })
-    });
+    const fullPrompt = `interior design, ${prompt}, photorealistic, high quality, 8k, professional photography, beautiful furniture`;
+
+    const response = await fetch(
+      `https://api.cloudflare.com/client/v4/accounts/${process.env.CF_ACCOUNT_ID}/ai/run/@cf/runwayml/stable-diffusion-v1-5-img2img`,
+      {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${process.env.CF_API_TOKEN}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          prompt: fullPrompt,
+          image: image,
+          strength: 0.75,
+          num_steps: 20,
+          guidance: 7.5,
+        })
+      }
+    );
 
     if (!response.ok) {
       const errText = await response.text();
-      throw new Error('Space fout: ' + errText.substring(0, 300));
+      throw new Error('Cloudflare fout: ' + errText.substring(0, 300));
     }
 
-    const result = await response.json();
+    const buffer = await response.arrayBuffer();
+    const base64 = Buffer.from(buffer).toString('base64');
 
-    const output = result?.data?.[0];
-    if (!output) {
-      throw new Error('Geen output. Volledige response: ' + JSON.stringify(result).substring(0, 300));
-    }
+    return res.status(200).json({ result: base64 });
 
-    // Output kan base64 of een URL zijn
-    let base64;
-    if (typeof output === 'string' && output.startsWith('data:')) {
-      base64 = output.split(',')[1];
-    } else if (output?.url) {
-      const imgRes = await fetch(output.url);
-      const buffer = await imgRes.arrayBuffer();
-      base64 = Buffer.from(buffer).toString('base64');
-    } else if (typeof output === 'string' && output.startsWith('http')) {
-      const imgRes = await fetch(output);
-      const buffer = await imgRes.arrayBuffer();
-      base64 = Buffer.from(buffer).toString('base64');
-    } else {
-      throw new Error('Onbekend output formaat: ' + JSON.stringify(output).substring(0, 200));
-    }
-
-    return res.status(200).json({ result: base
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
+}
