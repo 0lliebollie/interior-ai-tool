@@ -10,13 +10,14 @@ export default async function handler(req, res) {
 
   try {
     // Stap 1: Start de prediction
-    const createRes = await fetch('https://api.replicate.com/v1/models/adirik/interior-design/predictions', {
+    const createRes = await fetch('https://api.replicate.com/v1/predictions', {
       method: 'POST',
       headers: {
         'Authorization': `Bearer ${process.env.REPLICATE_API_TOKEN}`,
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
+        version: "76604baddc85b1b4616e1c6475eca080da339c8875bd4996705440484a6eac38",
         input: {
           image: `data:image/jpeg;base64,${image}`,
           prompt: prompt,
@@ -29,17 +30,21 @@ export default async function handler(req, res) {
     });
 
     const prediction = await createRes.json();
-    if (prediction.error) throw new Error(prediction.error);
 
-    const predictionId = prediction.id;
-    if (!predictionId) throw new Error('No prediction ID returned');
+    // Stuur volledige response terug als er geen ID is — helpt debuggen
+    if (!prediction.id) {
+      return res.status(500).json({ 
+        error: 'No prediction ID', 
+        detail: JSON.stringify(prediction) 
+      });
+    }
 
     // Stap 2: Poll totdat het klaar is (max 60 seconden)
     let result = null;
     for (let i = 0; i < 30; i++) {
       await new Promise(r => setTimeout(r, 2000));
 
-      const pollRes = await fetch(`https://api.replicate.com/v1/predictions/${predictionId}`, {
+      const pollRes = await fetch(`https://api.replicate.com/v1/predictions/${prediction.id}`, {
         headers: {
           'Authorization': `Bearer ${process.env.REPLICATE_API_TOKEN}`,
         }
@@ -51,13 +56,13 @@ export default async function handler(req, res) {
         result = Array.isArray(pollData.output) ? pollData.output[0] : pollData.output;
         break;
       } else if (pollData.status === 'failed') {
-        throw new Error('Prediction failed: ' + pollData.error);
+        throw new Error('Model failed: ' + pollData.error);
       }
     }
 
-    if (!result) throw new Error('Timeout — model took too long');
+    if (!result) throw new Error('Timeout — model duurde te lang');
 
-    // Stap 3: Haal de afbeelding op van de URL en stuur als base64
+    // Stap 3: Haal afbeelding op en stuur als base64
     const imgRes = await fetch(result);
     const buffer = await imgRes.arrayBuffer();
     const base64 = Buffer.from(buffer).toString('base64');
