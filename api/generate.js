@@ -11,7 +11,7 @@ export default async function handler(req, res) {
 
   try {
     const response = await fetch(
-      'https://api-inference.huggingface.co/models/lllyasviel/sd-controlnet-depth',
+      'https://router.huggingface.co/hf-inference/models/stabilityai/stable-diffusion-2-inpainting',
       {
         method: 'POST',
         headers: {
@@ -24,7 +24,7 @@ export default async function handler(req, res) {
             image: image,
             num_inference_steps: 30,
             guidance_scale: 7.5,
-            strength: 0.8,
+            strength: 0.75,
           }
         })
       }
