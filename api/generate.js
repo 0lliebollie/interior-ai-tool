@@ -9,33 +9,56 @@ export default async function handler(req, res) {
   }
 
   try {
+    // Stap 1: Start de prediction
     const createRes = await fetch('https://api.replicate.com/v1/models/adirik/interior-design/predictions', {
       method: 'POST',
       headers: {
         'Authorization': `Bearer ${process.env.REPLICATE_API_TOKEN}`,
         'Content-Type': 'application/json',
-        'Prefer': 'wait'
       },
       body: JSON.stringify({
         input: {
           image: `data:image/jpeg;base64,${image}`,
           prompt: prompt,
-          negative_prompt: 'ugly, bad quality, blurry, distorted, unrealistic',
+          negative_prompt: 'ugly, bad quality, blurry, distorted',
           guidance_scale: 15,
           prompt_strength: 0.8,
-          num_inference_steps: 50
+          num_inference_steps: 30
         }
       })
     });
 
     const prediction = await createRes.json();
-
     if (prediction.error) throw new Error(prediction.error);
 
-    const outputUrl = prediction.output?.[0] || prediction.output;
-    if (!outputUrl) throw new Error('No output from model');
+    const predictionId = prediction.id;
+    if (!predictionId) throw new Error('No prediction ID returned');
 
-    const imgRes = await fetch(outputUrl);
+    // Stap 2: Poll totdat het klaar is (max 60 seconden)
+    let result = null;
+    for (let i = 0; i < 30; i++) {
+      await new Promise(r => setTimeout(r, 2000));
+
+      const pollRes = await fetch(`https://api.replicate.com/v1/predictions/${predictionId}`, {
+        headers: {
+          'Authorization': `Bearer ${process.env.REPLICATE_API_TOKEN}`,
+        }
+      });
+
+      const pollData = await pollRes.json();
+
+      if (pollData.status === 'succeeded') {
+        result = Array.isArray(pollData.output) ? pollData.output[0] : pollData.output;
+        break;
+      } else if (pollData.status === 'failed') {
+        throw new Error('Prediction failed: ' + pollData.error);
+      }
+    }
+
+    if (!result) throw new Error('Timeout — model took too long');
+
+    // Stap 3: Haal de afbeelding op van de URL en stuur als base64
+    const imgRes = await fetch(result);
     const buffer = await imgRes.arrayBuffer();
     const base64 = Buffer.from(buffer).toString('base64');
 
