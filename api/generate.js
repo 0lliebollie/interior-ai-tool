@@ -4,38 +4,39 @@ export default async function handler(req, res) {
   }
 
   const { image, prompt } = req.body;
-
   if (!image || !prompt) {
     return res.status(400).json({ error: 'Missing image or prompt' });
   }
 
   try {
-    const response = await fetch(
-      'https://router.huggingface.co/hf-inference/models/stabilityai/stable-diffusion-2-inpainting',
-      {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${process.env.HF_API_TOKEN}`,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          inputs: prompt,
-          parameters: {
-            image: image,
-            num_inference_steps: 30,
-            guidance_scale: 7.5,
-            strength: 0.75,
-          }
-        })
-      }
-    );
+    const createRes = await fetch('https://api.replicate.com/v1/models/adirik/interior-design/predictions', {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${process.env.REPLICATE_API_TOKEN}`,
+        'Content-Type': 'application/json',
+        'Prefer': 'wait'
+      },
+      body: JSON.stringify({
+        input: {
+          image: `data:image/jpeg;base64,${image}`,
+          prompt: prompt,
+          negative_prompt: 'ugly, bad quality, blurry, distorted, unrealistic',
+          guidance_scale: 15,
+          prompt_strength: 0.8,
+          num_inference_steps: 50
+        }
+      })
+    });
 
-    if (!response.ok) {
-      const errText = await response.text();
-      throw new Error(`HuggingFace error: ${errText}`);
-    }
+    const prediction = await createRes.json();
 
-    const buffer = await response.arrayBuffer();
+    if (prediction.error) throw new Error(prediction.error);
+
+    const outputUrl = prediction.output?.[0] || prediction.output;
+    if (!outputUrl) throw new Error('No output from model');
+
+    const imgRes = await fetch(outputUrl);
+    const buffer = await imgRes.arrayBuffer();
     const base64 = Buffer.from(buffer).toString('base64');
 
     return res.status(200).json({ result: base64 });
