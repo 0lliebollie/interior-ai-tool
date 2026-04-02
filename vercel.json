@@ -1,0 +1,21 @@
+{
+  "functions": {
+    "api/generate.js": {
+      "memory": 1024,
+      "maxDuration": 60
+    }
+  }
+}
+```
+
+Commit that file.
+
+---
+
+Your repo now has all 3 files and should look like this:
+```
+interior-ai-tool/
+├── index.html
+├── vercel.json
+└── api/
+    └── generate.js
