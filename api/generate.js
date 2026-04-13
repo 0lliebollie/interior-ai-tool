@@ -8,81 +8,54 @@ export default async function handler(req, res) {
     return res.status(400).json({ error: 'Missing image or prompt' });
   }
 
-  const SPACE_URL = 'https://adin019-interior-ai-backend.hf.space';
-
   try {
-    // Stap 1: Upload afbeelding naar de Space
-    const imageBuffer = Buffer.from(image, 'base64');
-    const formData = new FormData();
-    const blob = new Blob([imageBuffer], { type: 'image/jpeg' });
-    formData.append('files', blob, 'render.jpg');
+    const fullPrompt = `interior design, ${prompt}, photorealistic, high quality, beautiful furniture, professional photography`;
 
-    const uploadRes = await fetch(`${SPACE_URL}/gradio_api/upload`, {
-      method: 'POST',
-      body: formData,
-    });
-
-    if (!uploadRes.ok) {
-      const errText = await uploadRes.text();
-      throw new Error('Upload mislukt: ' + errText.substring(0, 200));
-    }
-
-    const uploadData = await uploadRes.json();
-    const uploadedPath = uploadData?.[0];
-    if (!uploadedPath) throw new Error('Geen pad terug van upload');
-
-    // Stap 2: Start de generate job
-    const startRes = await fetch(`${SPACE_URL}/gradio_api/call/generate`, {
+    const response = await fetch('https://modelslab.com/api/v6/image_editing/img2img', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        data: [
-          { path: uploadedPath },
-          prompt
-        ]
+        key: process.env.MODELSLAB_API_KEY,
+        prompt: fullPrompt,
+        negative_prompt: 'ugly, blurry, bad quality, distorted, different room layout, changed walls',
+        init_image: `data:image/jpeg;base64,${image}`,
+        strength: 0.5,
+        guidance_scale: 7.5,
+        samples: 1,
+        steps: 20,
+        seed: null,
+        webhook: null,
+        track_id: null
       })
     });
 
-    if (!startRes.ok) {
-      const errText = await startRes.text();
-      throw new Error('Start mislukt: ' + errText.substring(0, 200));
+    const data = await response.json();
+
+    if (data.status === 'error') {
+      throw new Error('ModelsLab fout: ' + data.message);
     }
 
-    const startData = await startRes.json();
-    const eventId = startData?.event_id;
-    if (!eventId) throw new Error('Geen event_id: ' + JSON.stringify(startData));
-
-    // Stap 3: Poll het resultaat op
-    let resultUrl = null;
-    for (let i = 0; i < 60; i++) {
-      await new Promise(r => setTimeout(r, 3000));
-
-      const pollRes = await fetch(`${SPACE_URL}/gradio_api/call/generate/${eventId}`);
-      const text = await pollRes.text();
-
-      // Gradio stuurt SSE events terug
-      const lines = text.split('\n');
-      for (const line of lines) {
-        if (line.startsWith('data:')) {
-          const data = JSON.parse(line.slice(5).trim());
-          if (Array.isArray(data) && data[0]) {
-            const output = data[0];
-            resultUrl = output?.url || output?.path || (typeof output === 'string' ? output : null);
-            if (resultUrl) break;
-          }
-        }
-      }
-      if (resultUrl) break;
+    // Als hij nog processing is, poll dan
+    if (data.status === 'processing') {
+      await new Promise(r => setTimeout(r, 10000));
+      const pollRes = await fetch('https://modelslab.com/api/v6/image_editing/fetch/' + data.id, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ key: process.env.MODELSLAB_API_KEY })
+      });
+      const pollData = await pollRes.json();
+      const imgUrl = pollData.output?.[0];
+      if (!imgUrl) throw new Error('Geen output na polling');
+      const imgRes = await fetch(imgUrl);
+      const buffer = await imgRes.arrayBuffer();
+      const base64 = Buffer.from(buffer).toString('base64');
+      return res.status(200).json({ result: base64 });
     }
 
-    if (!resultUrl) throw new Error('Timeout — geen resultaat ontvangen');
+    const imgUrl = data.output?.[0];
+    if (!imgUrl) throw new Error('Geen output: ' + JSON.stringify(data).substring(0, 200));
 
-    // Stap 4: Haal afbeelding op en stuur als base64
-    const fullUrl = resultUrl.startsWith('http')
-      ? resultUrl
-      : `${SPACE_URL}/gradio_api/file=${resultUrl}`;
-
-    const imgRes = await fetch(fullUrl);
+    const imgRes = await fetch(imgUrl);
     const buffer = await imgRes.arrayBuffer();
     const base64 = Buffer.from(buffer).toString('base64');
 
