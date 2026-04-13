@@ -9,7 +9,7 @@ export default async function handler(req, res) {
   }
 
   try {
-    const fullPrompt = `interior design, ${prompt}, photorealistic, high quality, beautiful furniture, professional photography`;
+    const fullPrompt = `add furniture and interior decoration to this empty room, ${prompt}, keep exact same room layout, same walls, same windows, same floor plan, photorealistic`;
 
     const response = await fetch('https://modelslab.com/api/v6/image_editing/img2img', {
       method: 'POST',
@@ -17,9 +17,9 @@ export default async function handler(req, res) {
       body: JSON.stringify({
         key: process.env.MODELSLAB_API_KEY,
         prompt: fullPrompt,
-        negative_prompt: 'ugly, blurry, bad quality, distorted, different room layout, changed walls',
+        negative_prompt: 'ugly, blurry, bad quality, distorted, different room, changed walls, different windows, different ceiling, different floor plan, different architecture, new room',
         init_image: `data:image/jpeg;base64,${image}`,
-        strength: 0.5,
+        strength: 0.25,
         guidance_scale: 7.5,
         samples: 1,
         steps: 20,
