@@ -144,6 +144,7 @@
 
 <script>
 let imageBase64 = null;
+const SPACE_URL = 'https://adin019-interior-ai-backend.hf.space';
 
 function handleFile(e) {
   const file = e.target.files[0];
@@ -167,35 +168,86 @@ function addNote(text) {
 
 async function generate() {
   if (!imageBase64) return;
+
   const style = document.getElementById('style').value;
   const room = document.getElementById('room').value;
   const palette = document.getElementById('palette').value;
   const budget = document.getElementById('budget').value;
   const notes = document.getElementById('notes').value;
-
-  const prompt = `${style} ${room} interior design, ${palette} color palette, ${budget} furnishings${notes ? ', ' + notes : ''}, photorealistic, professional interior photography, 8k, highly detailed`;
+  const prompt = `${style} ${room}, ${palette}, ${budget}${notes ? ', ' + notes : ''}`;
 
   document.getElementById('resultCard').classList.add('visible');
   document.getElementById('generateBtn').disabled = true;
   document.getElementById('errorMsg').style.display = 'none';
+  document.getElementById('afterSide').innerHTML = `<div class="spinner"></div>`;
 
   const beforeSide = document.getElementById('beforeSide');
   beforeSide.innerHTML = `<img class="side-img" src="data:image/jpeg;base64,${imageBase64}">`;
 
-  const afterSide = document.getElementById('afterSide');
-  afterSide.innerHTML = `<div class="spinner"></div>`;
-
   try {
-    const res = await fetch('/api/generate', {
+    // Stap 1: Upload afbeelding direct naar de Space
+    const imageBuffer = Uint8Array.from(atob(imageBase64), c => c.charCodeAt(0));
+    const blob = new Blob([imageBuffer], { type: 'image/jpeg' });
+    const formData = new FormData();
+    formData.append('files', blob, 'render.jpg');
+
+    const uploadRes = await fetch(`${SPACE_URL}/gradio_api/upload`, {
+      method: 'POST',
+      body: formData,
+    });
+    if (!uploadRes.ok) throw new Error('Upload mislukt: ' + await uploadRes.text());
+    const uploadData = await uploadRes.json();
+    const uploadedPath = uploadData?.[0];
+    if (!uploadedPath) throw new Error('Geen pad terug van upload');
+
+    // Stap 2: Start de generate job
+    const startRes = await fetch(`${SPACE_URL}/gradio_api/call/generate`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ image: imageBase64, prompt })
+      body: JSON.stringify({
+        data: [{ path: uploadedPath }, prompt]
+      })
     });
-    const data = await res.json();
-    if (data.error) throw new Error(data.error);
-    afterSide.innerHTML = `<img class="side-img" src="data:image/jpeg;base64,${data.result}">`;
+    if (!startRes.ok) throw new Error('Start mislukt: ' + await startRes.text());
+    const startData = await startRes.json();
+    const eventId = startData?.event_id;
+    if (!eventId) throw new Error('Geen event_id ontvangen');
+
+    // Stap 3: Poll het resultaat op (direct vanuit de browser)
+    let resultUrl = null;
+    for (let i = 0; i < 120; i++) {
+      await new Promise(r => setTimeout(r, 3000));
+
+      const pollRes = await fetch(`${SPACE_URL}/gradio_api/call/generate/${eventId}`);
+      const text = await pollRes.text();
+
+      for (const line of text.split('\n')) {
+        if (line.startsWith('data:')) {
+          try {
+            const data = JSON.parse(line.slice(5).trim());
+            if (Array.isArray(data) && data[0]) {
+              const output = data[0];
+              resultUrl = output?.url || output?.path || (typeof output === 'string' ? output : null);
+              if (resultUrl) break;
+            }
+          } catch(e) {}
+        }
+      }
+      if (resultUrl) break;
+    }
+
+    if (!resultUrl) throw new Error('Timeout — model duurde te lang');
+
+    // Stap 4: Toon de afbeelding
+    const fullUrl = resultUrl.startsWith('http')
+      ? resultUrl
+      : `${SPACE_URL}/gradio_api/file=${resultUrl}`;
+
+    document.getElementById('afterSide').innerHTML =
+      `<img class="side-img" src="${fullUrl}">`;
+
   } catch (err) {
-    afterSide.innerHTML = '';
+    document.getElementById('afterSide').innerHTML = '';
     document.getElementById('errorMsg').style.display = 'block';
     document.getElementById('errorMsg').textContent = 'Error: ' + err.message;
   }
