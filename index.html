@@ -144,7 +144,7 @@
 
 <script>
 let imageBase64 = null;
-const SPACE_URL = 'https://adin019-interior-ai-backend.hf.space';
+const WORKER_URL = 'https://interioraitool.schoutenadinda.workers.dev';
 
 function handleFile(e) {
   const file = e.target.files[0];
@@ -180,71 +180,22 @@ async function generate() {
   document.getElementById('generateBtn').disabled = true;
   document.getElementById('errorMsg').style.display = 'none';
   document.getElementById('afterSide').innerHTML = `<div class="spinner"></div>`;
-
-  const beforeSide = document.getElementById('beforeSide');
-  beforeSide.innerHTML = `<img class="side-img" src="data:image/jpeg;base64,${imageBase64}">`;
+  document.getElementById('beforeSide').innerHTML = `<img class="side-img" src="data:image/jpeg;base64,${imageBase64}">`;
 
   try {
-    // Stap 1: Upload afbeelding direct naar de Space
-    const imageBuffer = Uint8Array.from(atob(imageBase64), c => c.charCodeAt(0));
-    const blob = new Blob([imageBuffer], { type: 'image/jpeg' });
-    const formData = new FormData();
-    formData.append('files', blob, 'render.jpg');
-
-    const uploadRes = await fetch(`${SPACE_URL}/gradio_api/upload`, {
-      method: 'POST',
-      body: formData,
-    });
-    if (!uploadRes.ok) throw new Error('Upload mislukt: ' + await uploadRes.text());
-    const uploadData = await uploadRes.json();
-    const uploadedPath = uploadData?.[0];
-    if (!uploadedPath) throw new Error('Geen pad terug van upload');
-
-    // Stap 2: Start de generate job
-    const startRes = await fetch(`${SPACE_URL}/gradio_api/call/generate`, {
+    const res = await fetch(WORKER_URL, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        data: [{ path: uploadedPath }, prompt]
-      })
+      body: JSON.stringify({ image: imageBase64, prompt })
     });
-    if (!startRes.ok) throw new Error('Start mislukt: ' + await startRes.text());
-    const startData = await startRes.json();
-    const eventId = startData?.event_id;
-    if (!eventId) throw new Error('Geen event_id ontvangen');
 
-    // Stap 3: Poll het resultaat op (direct vanuit de browser)
-    let resultUrl = null;
-    for (let i = 0; i < 120; i++) {
-      await new Promise(r => setTimeout(r, 3000));
+    if (!res.ok) throw new Error('Worker fout: ' + await res.text());
 
-      const pollRes = await fetch(`${SPACE_URL}/gradio_api/call/generate/${eventId}`);
-      const text = await pollRes.text();
-
-      for (const line of text.split('\n')) {
-        if (line.startsWith('data:')) {
-          try {
-            const data = JSON.parse(line.slice(5).trim());
-            if (Array.isArray(data) && data[0]) {
-              const output = data[0];
-              resultUrl = output?.url || output?.path || (typeof output === 'string' ? output : null);
-              if (resultUrl) break;
-            }
-          } catch(e) {}
-        }
-      }
-      if (resultUrl) break;
-    }
-
-    if (!resultUrl) throw new Error('Timeout — model duurde te lang');
-
-    // Stap 4: Toon de afbeelding
-    const fullUrl = resultUrl.startsWith('http')
-      ? resultUrl
-      : `${SPACE_URL}/gradio_api/file=${resultUrl}`;
+    const data = await res.json();
+    if (!data.result) throw new Error('Geen resultaat van Worker');
 
     document.getElementById('afterSide').innerHTML =
-      `<img class="side-img" src="${fullUrl}">`;
+      `<img class="side-img" src="data:image/png;base64,${data.result}">`;
 
   } catch (err) {
     document.getElementById('afterSide').innerHTML = '';
