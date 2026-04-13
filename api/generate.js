@@ -9,32 +9,60 @@ export default async function handler(req, res) {
   }
 
   try {
-    const fullPrompt = `interior design, ${prompt}, photorealistic, high quality, 8k, professional photography, beautiful furniture`;
+    // Stap 1: Zet base64 om naar een buffer en upload naar HF Space
+    const imageBuffer = Buffer.from(image, 'base64');
+    const blob = new Blob([imageBuffer], { type: 'image/jpeg' });
 
-    const response = await fetch(
-      `https://api.cloudflare.com/client/v4/accounts/${process.env.CF_ACCOUNT_ID}/ai/run/@cf/runwayml/stable-diffusion-v1-5-img2img`,
-      {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${process.env.CF_API_TOKEN}`,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          prompt: fullPrompt,
-          image: image,
-          strength: 0.75,
-          num_steps: 20,
-          guidance: 7.5,
-        })
-      }
-    );
+    const formData = new FormData();
+    formData.append('files', blob, 'render.jpg');
 
-    if (!response.ok) {
-      const errText = await response.text();
-      throw new Error('Cloudflare fout: ' + errText.substring(0, 300));
+    const uploadRes = await fetch('https://adin019-interior-ai-backend.hf.space/upload', {
+      method: 'POST',
+      body: formData,
+    });
+
+    if (!uploadRes.ok) {
+      const errText = await uploadRes.text();
+      throw new Error('Upload mislukt: ' + errText.substring(0, 200));
     }
 
-    const buffer = await response.arrayBuffer();
+    const uploadData = await uploadRes.json();
+    const uploadedPath = uploadData?.[0];
+    if (!uploadedPath) throw new Error('Geen pad terug van upload: ' + JSON.stringify(uploadData));
+
+    // Stap 2: Roep de generate functie aan met het geüploade pad
+    const predictRes = await fetch('https://adin019-interior-ai-backend.hf.space/run/predict', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        fn_index: 0,
+        data: [
+          { path: uploadedPath, type: 'filepath' },
+          prompt
+        ]
+      })
+    });
+
+    if (!predictRes.ok) {
+      const errText = await predictRes.text();
+      throw new Error('Predict mislukt: ' + errText.substring(0, 200));
+    }
+
+    const predictData = await predictRes.json();
+    const output = predictData?.data?.[0];
+
+    if (!output) {
+      throw new Error('Geen output: ' + JSON.stringify(predictData).substring(0, 300));
+    }
+
+    // Stap 3: Haal resultaat op en stuur als base64
+    const outputUrl = output?.url || output?.path || output;
+    const fullUrl = outputUrl.startsWith('http')
+      ? outputUrl
+      : `https://adin019-interior-ai-backend.hf.space/file=${outputUrl}`;
+
+    const imgRes = await fetch(fullUrl);
+    const buffer = await imgRes.arrayBuffer();
     const base64 = Buffer.from(buffer).toString('base64');
 
     return res.status(200).json({ result: base64 });
